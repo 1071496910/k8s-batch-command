@@ -7,6 +7,7 @@ import (
 	//"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 func GetPods(namespace, svcId string) []string {
@@ -30,7 +31,8 @@ func GetPods(namespace, svcId string) []string {
 }
 
 //cmd := exec.Command("kubectl", "exec", "--namespace=zcontainer", "php-web-30tcd", "grep", " ls", "/tmp/")
-func runCommand(namespace, name string, command ...string) string {
+func runCommand(commandWaitGroup *sync.WaitGroup, commandOutputChan chan string, namespace, name string, command ...string) string {
+	defer commandWaitGroup.Done()
 	commands := make([]string, 0)
 	commands = append(commands, namespace, name)
 	//commands = append(commands, "exec", "--namespace="+namespace, name)
@@ -46,10 +48,19 @@ func runCommand(namespace, name string, command ...string) string {
 		return ""
 	}
 
+	commandOutputChan <- string(output)
+
 	return string(output)
 }
 
 func doRequest(w http.ResponseWriter, r *http.Request) {
+	var commandOutputChan = make(chan string, 1024)
+	var commandWaitGroup sync.WaitGroup
+
+	if len(r.URL.Query()["namespace"]) == 0 {
+		return
+	}
+
 	namespace := r.URL.Query()["namespace"][0]
 	svcId := r.URL.Query()["svc_id"][0]
 	commands := r.URL.Query()["commands"]
@@ -58,7 +69,14 @@ func doRequest(w http.ResponseWriter, r *http.Request) {
 
 	res := ""
 	for _, pod := range pods {
-		res += runCommand(namespace, pod, commands...)
+		commandWaitGroup.Add(1)
+		go runCommand(&commandWaitGroup, commandOutputChan, namespace, pod, commands...)
+	}
+	commandWaitGroup.Wait()
+	close(commandOutputChan)
+
+	for s := range commandOutputChan {
+		res += s
 	}
 
 	w.Write([]byte(res))
@@ -66,9 +84,9 @@ func doRequest(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 
-	cmd := exec.Command("kubectl", []string{"exec", "--namespace=fortest", "test-ok--jetty-2604245236-30wh8", "grep", "/tmp", "/tmp/tmp"}...)
-	output, err := cmd.CombinedOutput()
-	fmt.Println(string(output), err)
+	//cmd := exec.Command("kubectl", []string{"exec", "--namespace=fortest", "test-ok--jetty-2604245236-30wh8", "grep", "/tmp", "/tmp/tmp"}...)
+	//output, err := cmd.CombinedOutput()
+	//fmt.Println(string(output), err)
 	http.HandleFunc("/", http.HandlerFunc(doRequest))
 	http.ListenAndServe(":8888", nil)
 }
