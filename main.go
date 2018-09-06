@@ -1,33 +1,35 @@
 package main
 
 import (
+	"flag"
 	"fmt"
-	//"bytes"
 	"net/http"
-	//"os"
 	"os/exec"
-	"strings"
 	"sync"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/pkg/api/v1"
+	"k8s.io/client-go/tools/clientcmd"
+)
+
+var (
+	kubeconfig = flag.String("kubeconfig", "/root/.kube/config", "absolute path to the kubeconfig file")
+	client     *kubernetes.Clientset
 )
 
 func GetPods(namespace, svcId string) []string {
-	cmd := exec.Command("./get_pod.sh", namespace, svcId)
-	output, err := cmd.CombinedOutput()
+	pods, err := client.Core().Pods(namespace).List(v1.ListOptions{
+		LabelSelector: "svc_id=" + svcId,
+	})
 	if err != nil {
-		fmt.Println(err)
-		return nil
+		panic(err.Error())
 	}
-	fmt.Println("DEBUG: get output", string(output))
-	res := strings.Split(string(output), " ")
-
-	trimed := make([]string, 0)
-	for _, r := range res {
-		if strings.TrimSpace(r) != "" {
-			trimed = append(trimed, strings.TrimSpace(r))
-		}
+	res := []string{}
+	for _, pod := range pods.Items {
+		res = append(res, pod.GetName())
 	}
-	fmt.Println("DEBUG: get pods ", trimed)
-	return trimed
+	fmt.Println("DEBUG: get pods ", res)
+	return res
 }
 
 //cmd := exec.Command("kubectl", "exec", "--namespace=zcontainer", "php-web-30tcd", "grep", " ls", "/tmp/")
@@ -83,10 +85,18 @@ func doRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	flag.Parse()
+	// uses the current context in kubeconfig
+	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	if err != nil {
+		panic(err.Error())
+	}
+	// creates the clientset
+	client, err = kubernetes.NewForConfig(config)
+	if err != nil {
+		panic(err.Error())
+	}
 
-	//cmd := exec.Command("kubectl", []string{"exec", "--namespace=fortest", "test-ok--jetty-2604245236-30wh8", "grep", "/tmp", "/tmp/tmp"}...)
-	//output, err := cmd.CombinedOutput()
-	//fmt.Println(string(output), err)
 	http.HandleFunc("/", http.HandlerFunc(doRequest))
 	http.ListenAndServe(":8888", nil)
 }
